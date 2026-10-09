@@ -2,7 +2,7 @@
 # Build context: etl/  (needs beam_etl/, sql_queries/, setup.py)
 # Versions must match the environment the pipeline was tested in.
 ARG PY_VERSION=312
-FROM gcr.io/dataflow-templates-base/python${PY_VERSION}-template-launcher-base
+FROM gcr.io/dataflow-templates-base/python${PY_VERSION}-template-launcher-base@sha256:9255f29e4edbfc77c0466241a1091c690b5276413d2686a82425ab311d70b1c6
 
 ARG BEAM_VERSION=2.76.0
 WORKDIR /template
