@@ -1,6 +1,6 @@
 {
   "name": "clean-trips",
-  "description": "Cleans raw Chicago taxi trips (historical BigQuery data or landed live data) into the silver layer.",
+  "description": "Cleans raw Chicago taxi data (historical BigQuery data or landed live data) into silver trips and outcomes.",
   "parameters": [
     {
       "name": "source",
@@ -8,6 +8,13 @@
       "helpText": "historical (BigQuery public table) or live (landing files). Default: historical.",
       "isOptional": true,
       "regexes": ["^(historical|live)$"]
+    },
+    {
+      "name": "dataset",
+      "label": "Dataset",
+      "helpText": "trips, outcomes or all. Live trips and outcomes arrive at different times, so run them separately. Default: all.",
+      "isOptional": true,
+      "regexes": ["^(trips|outcomes|all)$"]
     },
     {
       "name": "start_date",
@@ -24,8 +31,8 @@
     {
       "name": "out_lake",
       "label": "Lake bucket",
-      "helpText": "Lake bucket, e.g. gs://chicago-taxi-tips-project-lake",
-      "regexes": ["^gs://.+"]
+      "helpText": "Lake bucket without a trailing slash, e.g. gs://chicago-taxi-tips-project-lake",
+      "regexes": ["^gs://[a-z0-9._-]+$"]
     },
     {
       "name": "run_ts",

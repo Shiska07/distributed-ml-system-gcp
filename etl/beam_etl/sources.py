@@ -1,11 +1,18 @@
 """
 sources.py
-How raw trips are read for each source. Every reader returns a PCollection of dicts
-with the SAME field names and types, so the rest of the pipeline doesn't care where
-the data came from.
+How raw data is read for each source. Every reader returns a dict of PCollections:
 
-  historical: BigQuery public table via SQL (sql_queries/02_load_table.sql)
-  live:       landing JSON files (requests + outcomes), joined on unique_key
+  {"trips": ..., "outcomes": ...}   (only the keys that source has)
+
+  trips:    request-time fields only (no tips): what the model sees
+  outcomes: unique_key + tips: the ground truth, joined to trips later in Spark
+
+All trips have the same field names and types, and so do all outcomes, so the rest
+of the pipeline doesn't care where the data came from.
+
+  historical:   BigQuery public table via SQL (sql_queries/02_load_table.sql) → trips + outcomes
+  live:         landing/live_trips/   JSON (production requests)              → trips
+  ground_truth: landing/ground_truth/ JSON (outcomes, arrive later)           → outcomes
 """
 
 import json
@@ -17,20 +24,36 @@ import apache_beam as beam
 SQL_DIR = Path(__file__).resolve().parent.parent / "sql_queries"
 HISTORICAL_QUERY = "02_load_table.sql"
 
-# Outcomes (tips) can land a little after the trip; read this many extra days of them
-OUTCOME_GRACE_DAYS = 1
+# Field lists for each dataset. Trips must never contain the label (tips).
+TRIP_FIELDS = [
+    "unique_key", "taxi_id", "trip_start_timestamp", "trip_seconds", "trip_miles", "fare",
+    "pickup_community_area", "dropoff_community_area", "tolls", "extras",
+    "company", "payment_type",
+]
+OUTCOME_FIELDS = ["unique_key", "tips"]
+
+
+def pick(row: dict, fields: list[str]) -> dict:
+    """Keep only the given fields (missing ones become None)."""
+    return {f: row.get(f) for f in fields}
 
 
 # ----------------------------- HISTORICAL ------------------------------------
 
-def read_historical(p, args):
-    """Run the extraction query for [start_date, end_date) against BigQuery."""
+def read_historical(p, args, datasets):
+    """Read [start_date, end_date) from BigQuery once, then split each row into trip + outcome."""
     query = (SQL_DIR / HISTORICAL_QUERY).read_text().format(
         start_date=args.start_date, end_date=args.end_date)
-    return p | "ReadBigQuery" >> beam.io.ReadFromBigQuery(query=query, use_standard_sql=True)
+    rows = p | "ReadBigQuery" >> beam.io.ReadFromBigQuery(query=query, use_standard_sql=True)
+    out = {}
+    if "trips" in datasets:
+        out["trips"] = rows | "ToTrip" >> beam.Map(pick, TRIP_FIELDS)
+    if "outcomes" in datasets:
+        out["outcomes"] = rows | "ToOutcome" >> beam.Map(pick, OUTCOME_FIELDS)
+    return out
 
 
-# ----------------------------- SIMULATED LIVE (BATCHED) ------------------------------------------
+# ----------------------------- LANDING (BATCHED PRODUCTION DATA) -------------
 
 def landing_paths(lake: str, folder: str, start: date, end: date) -> list[str]:
     """One glob per day in [start, end), e.g. …/landing/live_trips/event_date=2022-04-01/*.json"""
@@ -56,16 +79,15 @@ def _to_ts(v):
     return datetime.fromisoformat(v.replace(" UTC", "").replace("T", " ").rstrip("Z"))
 
 
-def live_to_raw(row: dict) -> dict:
-    """Convert a merged landing record to the same field names/types the historical query returns."""
+def landing_to_trip(row: dict) -> dict:
+    """Convert a landing request to the same field names/types as historical trips."""
     return {
         "unique_key": row.get("unique_key"),
         "taxi_id": row.get("taxi_id"),
-        "trip_start_ts": _to_ts(row.get("trip_start_timestamp")),
+        "trip_start_timestamp": _to_ts(row.get("trip_start_timestamp")),
         "trip_seconds": _to_int(row.get("trip_seconds")),
         "trip_miles": _to_float(row.get("trip_miles")),
         "fare": _to_float(row.get("fare")),
-        "tips": _to_float(row.get("tips")),
         "pickup_community_area": _to_int(row.get("pickup_community_area")),
         "dropoff_community_area": _to_int(row.get("dropoff_community_area")),
         "tolls": _to_float(row.get("tolls")),
@@ -75,40 +97,45 @@ def live_to_raw(row: dict) -> dict:
     }
 
 
-def merge_trip(keyed):
-    """Join one request with its outcome. Skip trips whose tip hasn't arrived yet."""
-    _key, grouped = keyed
-    requests, outcomes = list(grouped["request"]), list(grouped["outcome"])
-    if not requests or not outcomes:
-        return
-    row = dict(requests[0])
-    row["tips"] = outcomes[0].get("tips")
-    yield row
+def landing_to_outcome(row: dict) -> dict:
+    """Convert a landing outcome to the same field names/types as historical outcomes."""
+    return {
+        "unique_key": row.get("unique_key"),
+        "tips": _to_float(row.get("tips")),
+    }
 
 
-def read_live(p, args):
-    """Read landing requests + outcomes for [start_date, end_date) and join them on unique_key."""
-    def read(name: str, folder: str, last_day: date):
-        return (p
-                | f"{name}Paths" >> beam.Create(
-                      landing_paths(args.out_lake, folder, args.start_date, last_day))
-                | f"Read{name}"  >> beam.io.ReadAllFromText()      # days with no files are skipped
-                | f"Parse{name}" >> beam.Map(json.loads)
-                | f"Key{name}"   >> beam.Map(lambda r: (r.get("unique_key"), r)))
+def read_landing(p, args, folder: str, name: str):
+    """Read and parse all landing JSON files for [start_date, end_date)."""
+    return (p
+            | f"{name}Paths" >> beam.Create(
+                  landing_paths(args.out_lake, folder, args.start_date, args.end_date))
+            | f"Read{name}"  >> beam.io.ReadAllFromText()      # days with no files are skipped
+            | f"Parse{name}" >> beam.Map(json.loads))
 
-    requests = read("Requests", "live_trips", args.end_date)
-    outcomes = read("Outcomes", "ground_truth", args.end_date + timedelta(days=OUTCOME_GRACE_DAYS))
 
-    return ({"request": requests, "outcome": outcomes}
-            | "JoinOnTrip" >> beam.CoGroupByKey()
-            | "MergeTrip"  >> beam.FlatMap(merge_trip)
-            | "ToRawShape" >> beam.Map(live_to_raw))
+# landing folder for each dataset of the live source
+LANDING_FOLDERS = {"trips": "live_trips", "outcomes": "ground_truth"}
+
+
+def read_live(p, args, datasets):
+    """Production data from the landing zone. Trips and outcomes arrive at different times,
+    so each is read only when requested."""
+    out = {}
+    if "trips" in datasets:
+        raw = read_landing(p, args, LANDING_FOLDERS["trips"], "Trips")
+        out["trips"] = raw | "ToTrip" >> beam.Map(landing_to_trip)
+    if "outcomes" in datasets:
+        raw = read_landing(p, args, LANDING_FOLDERS["outcomes"], "Outcomes")
+        out["outcomes"] = raw | "ToOutcome" >> beam.Map(landing_to_outcome)
+    return out
+
 
 
 # ----------------------------- REGISTRY --------------------------------------
 
-# source name → (reader function, silver dataset folder)
+# source name → reader(p, args, datasets) returning {"trips": ..., "outcomes": ...}
 SOURCES = {
-    "historical": (read_historical, "trips"),
-    "live":       (read_live,       "live_trips"),
+    "historical": read_historical,
+    "live":       read_live,
 }
