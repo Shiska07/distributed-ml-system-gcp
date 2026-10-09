@@ -20,13 +20,13 @@
       "name": "start_date",
       "label": "Start date",
       "helpText": "First day to process, inclusive (YYYY-MM-DD).",
-      "regexes": ["^\\d{4}-\\d{2}-\\d{2}$"]
+      "regexes": ["^[0-9]{4}-[0-9]{2}-[0-9]{2}$"]
     },
     {
       "name": "end_date",
       "label": "End date",
       "helpText": "Day after the last day to process, exclusive (YYYY-MM-DD).",
-      "regexes": ["^\\d{4}-\\d{2}-\\d{2}$"]
+      "regexes": ["^[0-9]{4}-[0-9]{2}-[0-9]{2}$"]
     },
     {
       "name": "out_lake",
@@ -39,7 +39,7 @@
       "label": "Run timestamp",
       "helpText": "Optional UTC run timestamp YYYYMMDD-HHMMSS; generated if empty.",
       "isOptional": true,
-      "regexes": ["^\\d{8}-\\d{6}$"]
+      "regexes": ["^[0-9]{4}-[0-9]{2}-[0-9]{2}$"]
     }
   ]
 }
