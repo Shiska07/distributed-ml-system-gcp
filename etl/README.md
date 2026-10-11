@@ -1,220 +1,176 @@
 # ETL Pipelines
 
-Two pipelines turn raw taxi trips into training data:
+Three steps turn raw taxi data into training and inference data:
 
 | Step | Tool | Input | Output |
 |---|---|---|---|
-| Cleaning | Apache Beam on Dataflow | BigQuery or the GCS landing zone | `silver/` clean Parquet |
-| Features | Apache Spark on Dataproc Serverless | One silver run | `gold/` versioned dataset |
+| Cleaning | Apache Beam on Dataflow (Flex Template) | BigQuery or the landing zone | `silver/trips`, `silver/outcomes` |
+| Features | Apache Spark on Dataproc Serverless | One silver trips run | `gold/features` |
+| Training dataset | Apache Spark on Dataproc Serverless | Features + outcomes | `gold/labels/<version>` |
 
 ```
-landing/  raw production batches (JSON)
-silver/   cleaned records, one folder per run
-rejected/ records that failed validation, with reasons
-gold/     features + label, split into train / val / test
+landing/   raw production batches (JSON)
+silver/    cleaned trips and outcomes, one folder per run
+rejected/  records that failed validation, with reasons
+gold/      features (for training and inference) and training labels
 ```
+
+---
+
+## Key Design Decisions
+
+- **Features and labels are kept separate.** Beam splits every record into a *trip*
+  (what is known at payment time) and an *outcome* (the tip). The label only meets the
+  features when a training dataset is built, so it can never leak into the features.
+- **One feature pipeline for training and serving.** The same feature job runs on historical
+  and live data, using one shared feature module (`common/`). This avoids training/serving skew.
+- **Features are stored once.** A training dataset stores only labels and the split, and points
+  to the feature rows it uses. No feature data is copied per dataset version.
+- **Immutable, traceable runs.** Every run writes to a new folder and never overwrites. Each
+  output has a `_manifest.json` (inputs, git commit, row counts), written last, so a folder
+  without a manifest is incomplete.
+- **Labels are derived late.** Silver keeps raw tips. The label rule (`tips / fare > 0.20`)
+  is applied when building a training dataset, so it can change without reprocessing.
 
 ---
 
 ## 1. Data Exploration
 
-Profiling the public table (`bigquery-public-data.chicago_taxi_trips`) with SQL found:
-
-- missing values and duplicate trip IDs
-- impossible trips (zero distance, negative fares, extreme durations)
-- **tips are only recorded for card payments**
-
-Cash trips are excluded, so the model learns real tipping behavior instead of a recording
-gap. Queries are in `sql_queries/`.
+Profiling `bigquery-public-data.chicago_taxi_trips` found missing values, duplicate trip IDs,
+impossible trips, and that **tips are only recorded for card payments**. Cash trips are
+excluded, so the model learns real tipping behavior instead of a recording gap.
 
 ---
 
-## 2. Cleaning Pipeline (Beam → silver)
+## 2. Cleaning (Beam → silver)
 
-### Sources
+### Sources and datasets
 
-The pipeline has one cleaning path and two readers, chosen with `--source`:
+`--source` says where data comes from; `--dataset` says what to produce.
 
-| Source | Reads from | Used for |
+| Source | Reads from | Produces |
 |---|---|---|
-| `historical` | BigQuery, via `sql_queries/02_load_table.sql` | Training data |
-| `live` | `landing/live_trips/` + `landing/ground_truth/` (JSON) | Production batches |
+| `historical` | BigQuery (`sql_queries/02_load_table.sql`) | trips + outcomes (one read) |
+| `live` | `landing/live_trips/` | trips |
+| `live` | `landing/ground_truth/` | outcomes |
 
-For `live`, each trip request is joined with its outcome (tips) on `unique_key`. Outcomes are
-read one extra day past the end date, since a trip can finish after midnight. Trips with no
-outcome yet are skipped and picked up by a later run.
-
-A date range becomes one file pattern per day
-(`landing/live_trips/event_date=YYYY-MM-DD/*.json`), so no extra tables are needed.
+Live trips and outcomes arrive at different times, so they are usually run separately
+(`--dataset trips` / `--dataset outcomes`). A date range becomes one file pattern per day,
+so no extra tables are needed.
 
 ### Steps
 
-1. **Read** from the selected source and convert rows to one common shape.
-2. **Validate** each record with `CleanTrip`. It has three outcomes:
-   - *filtered:* out of scope (e.g. cash payments)
-   - *rejected:* fails a rule; written to `rejected/` with the reasons
-   - *valid:* typed and passed on
+1. **Read** and convert to one common shape per dataset.
+2. **Validate:** `CleanTrip` (trip rules, card-only filter) and `CleanOutcome` (tip rules).
+   Failures go to `rejected/` with the reasons.
 3. **Deduplicate** on `unique_key`.
-4. **Write** Parquet to silver, and the rejects as JSON lines.
+4. **Write** Parquet to silver.
 
-Beam metrics counters track valid, filtered and rejected rows.
-
-### Output layout
+### Output
 
 ```
-silver/<dataset>/run_id=<start>_<end>_<timestamp>/part-*.parquet
-rejected/<dataset>/run_id=<start>_<end>_<timestamp>/part-*.jsonl
+silver/trips/source=<historical|live>/run_id=<start>_<end>_<ts>/
+silver/outcomes/source=<historical|live>/run_id=<start>_<end>_<ts>/
 ```
 
-- `<dataset>` is `trips` (historical) or `live_trips` (live).
-- Each run gets a new folder, so reruns never overwrite or duplicate data.
-- Downstream jobs read one explicit run folder.
-- `--run_ts` can be passed in so an orchestrator knows the output path before the job starts.
+Trips and outcomes are joined later by `unique_key`, never by folder.
 
-### Files
+### Flex Template
+
+The pipeline is packaged as a **Dataflow Flex Template** (image in Artifact Registry + spec
+in GCS), tagged with the git commit. It runs from parameters only: `source`, `dataset`,
+`start_date`, `end_date`, `out_lake`, optional `run_ts`.
 
 | File | Purpose |
 |---|---|
-| `beam_etl/transforms.py` | Validation rules and the `CleanTrip` transform |
-| `beam_etl/sources.py` | Readers for each source(live batched/historical training), and the `SOURCES` registry |
-| `beam_etl/pipeline.py` | Arguments, output paths, read → clean → dedupe → write |
-| `setup.py` | Packages `beam_etl` for Dataflow workers |
+| `beam_etl/sources.py` | Readers per source; splits rows into trips and outcomes |
+| `beam_etl/transforms.py` | Validation rules, `CleanTrip`, `CleanOutcome` |
+| `beam_etl/pipeline.py` | Arguments, paths, clean → dedupe → write per dataset |
+| `beam_etl/Dockerfile`, `cloudbuild.yaml`, `metadata.json` | Flex Template build and parameters |
 
 ---
 
-## 3. Flex Template
+## 3. Features (Spark → gold/features)
 
-The cleaning pipeline is packaged as a **Dataflow Flex Template**, so it can be launched with
-parameters only. No local Python environment is needed.
+**Prediction moment:** end of the trip, at payment. Only values known then are used.
 
-- **Image** (Artifact Registry): code, SQL and pinned dependencies (Python 3.12, Beam 2.76.0).
-- **Spec file** (GCS): points to the image and lists the allowed parameters.
-
-| File | Purpose |
+| Group | Features |
 |---|---|
-| `beam_etl/Dockerfile` | Builds the launcher image |
-| `beam_etl/cloudbuild.yaml` | Cloud Build steps for the image |
-| `beam_etl/metadata.json` | Template parameters and validation rules |
-| `.gcloudignore` | Keeps Spark jobs and tests out of the build |
+| Time | `hour`, `day_of_week`, `is_weekend` |
+| Trip | `trip_miles`, `trip_minutes`, `avg_speed_mph` |
+| Cost | `fare`, `fare_per_mile`, `extras`, `tolls`, `has_extras` |
+| Place | `pickup_area`, `dropoff_area`, `is_airport`, `is_downtown`, `same_area` |
+| Operator | `company` |
 
-Each build is tagged with the git commit:
-
-```
-<AR_REPO>/clean-trips:<commit>                            image
-gs://<code-bucket>/templates/clean-trips/<commit>.json    spec
-gs://<code-bucket>/templates/clean-trips/latest.json      current release
-```
-
-Older commits stay available for comparison or rollback.
-
-### Parameters
-
-| Parameter | Required | Example |
-|---|---|---|
-| `source` | No (default `historical`) | `live` |
-| `start_date` | Yes | `2022-04-01` |
-| `end_date` | Yes (exclusive) | `2022-04-08` |
-| `out_lake` | Yes | `gs://<lake-bucket>` |
-| `run_ts` | No | `20260101-120000` |
+- All features are row-level and stateless, so serving needs no lookups.
+- Spark runs the shared pandas code from `common/` with `mapInPandas`.
+- The output keeps the silver run's source and `run_id`:
+  `gold/features/source=<S>/run_id=<R>/`.
+- Learned encodings (company vocabulary, scaling) are **not** stored here. They are fitted
+  during training on the train split only and saved with the model.
 
 ---
 
-## 4. Feature Pipeline (Spark → gold)
+## 4. Training Dataset (Spark → gold/labels)
 
-### Prediction moment
+1. Read all feature and outcome runs of a source; keep trips in the date window.
+2. Keep the newest row per `unique_key` (handles reruns).
+3. Inner join on `unique_key`; drop unrealistic tips.
+4. Create the label with the shared rule from `common/`.
+5. Time-based split (~80/10/10): val and test always come after train.
 
-The model predicts **at the end of the trip, at payment**. A feature is allowed only if it is
-known at that moment and does not include the tip.
-
-### Label
-
-`label = 1` if `tips / fare > 0.20`, else `0`. Defined once in `common/`.
-
-### Features (v1)
-
-All features are computed from a single trip, so serving needs no extra lookups.
-
-| Group | Features | Reason |
-|---|---|---|
-| Time | `hour`, `day_of_week`, `is_weekend` | Commuter, nightlife and weekend riders tip differently |
-| Trip | `trip_miles`, `trip_minutes`, `avg_speed_mph` | Long or slow trips can change tipping |
-| Cost | `fare`, `fare_per_mile`, `extras`, `tolls`, `has_extras` | Expensive or surcharged trips can lower tip % |
-| Place | `pickup_area`, `dropoff_area`, `is_airport`, `is_downtown`, `same_area` | Location effects, e.g. airport travellers |
-| Operator | `company` | Companies use different payment terminals and tip presets |
-
-Encodings learned from data (e.g. category vocabularies) are **not** stored in gold. They are
-fitted at training time on the train split only, so gold stays model-agnostic.
-
-### How it works
-
-- Spark reads one silver run and runs the shared pandas code from `common/` with
-  `mapInPandas`. Serving uses the same functions.
-- **Time-based split (~80/10/10):** cut dates are computed from the data, so validation and
-  test data always come after training data.
-- **Output:** `gold/taxi_tips/<version>/split=train|val|test/`. Writing to an existing version
-  fails instead of overwriting.
-- **Manifest (`_manifest.json`):** source silver run, git commit, label rule, feature list,
-  split dates, and row count and label rate per split. It is written last, so a version with
-  no manifest is incomplete.
+Output: `gold/labels/<version>/split=train|val|test/` with `unique_key`, `feature_run_id`
+and `label`. The manifest lists the feature and outcome runs used, the match rate, split
+dates, and row count and label rate per split. Training joins features and labels on
+`unique_key` + `feature_run_id`.
 
 | File | Purpose |
 |---|---|
-| `spark_jobs/build_gold_dataset.py` | Spark job: silver → gold + manifest |
+| `spark_jobs/get_features.py` | Silver trips run → features + manifest |
+| `spark_jobs/build_training_dataset.py` | Features + outcomes → labels/split + manifest |
 | `../common/taxi_features/` | Shared feature and label code |
-
-### Planned (v2)
-
-Aggregate features (e.g. historical tip rate per area or company). These need point-in-time
-correctness and a lookup at serving time.
 
 ---
 
 ## 5. Validation and Tests
 
-- **SQL checks** on each silver run (duplicates, nulls, date range), using a BigQuery external
-  table over the Parquet files. Queries are in `sql_queries/`.
-- **Unit tests** (pytest, Beam `TestPipeline`) for validation rules, readers and features.
-  They run without GCP.
+- **SQL checks** per silver run (duplicates, nulls, date window) as `ASSERT`s in
+  `sql_queries/03_validate_silver.sql`.
+- **Unit tests** for validation rules, readers, features, the Spark schema and the training
+  helpers. They run without GCP.
 
 ```bash
-pytest etl common -v   # from the repo root
+pytest common etl -q
 ```
 
 ---
 
 ## 6. How to Run
 
-All commands run from the repo root:
-
-```bash
-source config/dev.env
-```
+From the repo root, after `source config/dev.env`:
 
 | Script | What it does |
 |---|---|
-| `simulation/00_seed_landing.sh [START END]` | Writes held-out data to the landing zone as daily batches |
-| `etl/scripts/00_run_beam_pipeline.sh START END` | Runs the Beam pipeline on Dataflow from Cloud Shell |
-| `etl/scripts/01_build_beam_template.sh` | Builds the Flex Template image and spec |
-| `etl/scripts/02_run_spark_feature_job.sh SILVER_PATH VERSION` | Runs the Spark job on Dataproc Serverless |
+| `simulation/00_seed_landing.sh [START END]` | Seeds the landing zone with held-out data |
+| `etl/scripts/01_build_beam_template.sh` | Builds the Flex Template (image + spec) |
+| `etl/scripts/02_run_spark_features.sh historical\|live\|<run path>` | Builds features for a silver run |
+| `etl/scripts/03_run_spark_training_dataset.sh SOURCE START END VERSION` | Builds a training dataset |
 
-**Launch the template:**
+**Clean data with the template:**
 
 ```bash
-gcloud dataflow flex-template run "clean-trips-$(date +%Y%m%d-%H%M%S)" \
+RUN_TS=$(date -u +%Y%m%d-%H%M%S)
+gcloud dataflow flex-template run "clean-historical-$RUN_TS" \
   --template-file-gcs-location "$CODE/templates/clean-trips/latest.json" \
-  --region "$REGION" \
-  --service-account-email "$SA" \
-  --staging-location "$TEMP/dataflow/staging" \
-  --temp-location "$TEMP/dataflow/temp" \
-  --disable-public-ips \
-  --max-workers 2 \
-  --parameters source=live,start_date=2022-04-01,end_date=2022-04-08,out_lake=$LAKE
+  --region "$REGION" --service-account-email "$SA" \
+  --staging-location "$TEMP/dataflow/staging" --temp-location "$TEMP/dataflow/temp" \
+  --disable-public-ips --max-workers 4 \
+  --parameters "source=historical,dataset=all,start_date=$TRAIN_START,end_date=$TRAIN_END,out_lake=$LAKE,run_ts=$RUN_TS"
 ```
 
-**Build a gold dataset:**
+**Then features and a training dataset:**
 
 ```bash
-bash etl/scripts/02_run_spark_feature_job.sh "$LAKE/silver/trips/run_id=<run_id>" v1
+bash etl/scripts/02_run_spark_features.sh historical
+bash etl/scripts/03_run_spark_training_dataset.sh historical "$TRAIN_START" "$TRAIN_END" v1
 ```
-
----
