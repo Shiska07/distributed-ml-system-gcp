@@ -1,19 +1,16 @@
 """
-Row-level feature and label logic, shared by feature engineering (Spark), training and serving.
+Row-level feature and label logic: the single definition used everywhere.
+
+Used by:
+  build_features → Spark create_features (training + batch inference), online serving
+  create_label   → build_training_dataset (training labels), monitoring (live labels)
 
 Rules:
 - Only use values known at payment time (end of trip).
 - Never use tips or trip_total as features (they contain the answer).
-- Vocabularies/encodings belong in training since data at this stange benefits from being model agnostic.
-  Vocabularies (e.g. "top 20 companies")
-   and encodings (one-hot, scaling) are computed from the TRAINING split and
-   saved with the model, for two reasons:
-   - Learned from data: if they were computed here, over all rows, the val and
-     test splits would influence them, which leaks information into evaluation.
-   - Model-specific: a tree model needs no scaling and a linear model does.
-     Keeping them out of here lets gold stay model-agnostic, so one gold
-     version can train any model.
-   This module holds only fixed rules that never change between training runs.
+- Only fixed, stateless rules live here. Anything learned from data (company vocabulary,
+  scaling statistics) is fitted on the train split during training and saved with the model:
+  learned values would leak evaluation data if computed here, and they are model-specific.
 
 
 Output features
@@ -37,6 +34,7 @@ TIP_THRESHOLD = 0.20
 AIRPORT_AREAS = {56, 76}          # Midway (Garfield Ridge), O'Hare
 DOWNTOWN_AREAS = {8, 32, 33}      # Near North Side, Loop, Near South Side
 UNKNOWN_AREA = -1              # outside Chicago / missing
+UNKNOWN_COMPANY = "Unknown"
 
 FEATURE_COLUMNS = [
     "hour", "day_of_week", "is_weekend",
@@ -87,7 +85,7 @@ def build_features(df: pd.DataFrame, keep: list[str] | None = None):
     # Companies use different payment terminals with different preset tip
     # buttons (e.g. 15/20/25%), likely a strong signal. Kept as the raw name:
     # grouping rare companies into "other" is learned from data (rule 3).
-    out["company"] = df["company"].fillna("unknown").str.strip()
+    out["company"] = df["company"].fillna(UNKNOWN_COMPANY).str.strip()
     
     features = out[FEATURE_COLUMNS]
     if keep:
@@ -96,8 +94,7 @@ def build_features(df: pd.DataFrame, keep: list[str] | None = None):
 
 
 def create_label(df: pd.DataFrame) -> pd.Series:
-    """1 if the tip is more than 20% of the fare, else 0.
-
-    Shared so training and monitoring use exactly the same definition.
-    """
+    """1 if the tip is more than 20% of the fare, else 0. Shared by training and monitoring."""
+    if df["tips"].isna().any() or (df["fare"] <= 0).any():
+        raise ValueError("create_label needs non-null tips and fare > 0")
     return ((df["tips"] / df["fare"]) > TIP_THRESHOLD).astype(int)
