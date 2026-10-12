@@ -1,8 +1,14 @@
+### Prerequisites
+# Python 3.12, Google Cloud CLI
+# Java 17 (needed by PySpark for the Spark tests): `sudo apt-get install -y openjdk-17-jre-headless`
+
 # Python packages needed to run this project
 # Install with: pip install -r requirements.txt
 
-apache-beam==2.76.0
-numpy==2.4.6
-pandas==3.0.6
-pyspark==4.2.0
+apache-beam[gcp]==2.76.0     
 pytest==9.1.1
+pyspark==3.5.3
+pandas==2.2.3
+numpy==1.26.4
+pyarrow==15.0.2
+setuptools
