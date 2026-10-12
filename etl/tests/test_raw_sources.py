@@ -1,9 +1,9 @@
 from datetime import date, datetime
 
-from beam_etl.sources import (
+from ingestion.sources import (
     OUTCOME_FIELDS, TRIP_FIELDS, landing_paths, landing_to_outcome, landing_to_trip, pick,
 )
-from beam_etl.transforms import validate_trip
+from ingestion.transforms import validate_trip
 
 
 def test_landing_paths_one_per_day_end_exclusive():

@@ -34,7 +34,7 @@ source "$REPO_DIR/config/dev.env"
 : "${TEMP:?TEMP not set in config/dev.env}"
 : "${SA:?SA not set in config/dev.env}"
 
-JOB="$ETL_DIR/spark_jobs/$JOB_FILE"
+JOB="$ETL_DIR/features/$JOB_FILE"
 [[ -f "$JOB" ]] || { echo "Job file not found: $JOB" >&2; exit 1; }
 
 # ---------------- Decide which silver run to process ----------------

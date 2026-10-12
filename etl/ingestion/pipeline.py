@@ -14,7 +14,7 @@ Output (one immutable folder per dataset, source and run):
   rejected/<dataset>/source=<source>/run_id=<start>_<end>_<ts>/part-*.jsonl
 
 Run from the etl/ folder:
-  python -m beam_etl.pipeline --source historical --start_date 2022-01-01 --end_date 2022-01-02 \
+  python -m ingestion.pipeline --source historical --start_date 2022-01-01 --end_date 2022-01-02 \
       --out_lake $LAKE --project $PROJECT_ID --temp_location $TEMP/beam-local
 """
 
@@ -27,8 +27,8 @@ import apache_beam as beam
 import pyarrow as pa
 from apache_beam.options.pipeline_options import GoogleCloudOptions, PipelineOptions
 
-from beam_etl.sources import SOURCES
-from beam_etl.transforms import REJECTED, CleanOutcome, CleanTrip
+from ingestion.sources import SOURCES
+from ingestion.transforms import REJECTED, CleanOutcome, CleanTrip
 
 # Schemas of the silver Parquet files; must match what the DoFns emit
 TRIP_SCHEMA = pa.schema([

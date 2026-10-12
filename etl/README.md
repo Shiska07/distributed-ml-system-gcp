@@ -83,10 +83,10 @@ in GCS), tagged with the git commit. It runs from parameters only: `source`, `da
 
 | File | Purpose |
 |---|---|
-| `beam_etl/sources.py` | Readers per source; splits rows into trips and outcomes |
-| `beam_etl/transforms.py` | Validation rules, `CleanTrip`, `CleanOutcome` |
-| `beam_etl/pipeline.py` | Arguments, paths, clean → dedupe → write per dataset |
-| `beam_etl/Dockerfile`, `cloudbuild.yaml`, `metadata.json` | Flex Template build and parameters |
+| `ingestion/sources.py` | Readers per source; splits rows into trips and outcomes |
+| `ingestion/transforms.py` | Validation rules, `CleanTrip`, `CleanOutcome` |
+| `ingestion/pipeline.py` | Arguments, paths, clean → dedupe → write per dataset |
+| `ingestion/Dockerfile`, `cloudbuild.yaml`, `metadata.json` | Flex Template build and parameters |
 
 ---
 
@@ -126,8 +126,8 @@ dates, and row count and label rate per split. Training joins features and label
 
 | File | Purpose |
 |---|---|
-| `spark_jobs/get_features.py` | Silver trips run → features + manifest |
-| `spark_jobs/build_training_dataset.py` | Features + outcomes → labels/split + manifest |
+| `features/get_features.py` | Silver trips run → features + manifest |
+| `features/build_training_dataset.py` | Features + outcomes → labels/split + manifest |
 | `../common/taxi_features/` | Shared feature and label code |
 
 ---

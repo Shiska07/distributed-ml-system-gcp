@@ -33,7 +33,7 @@ echo ">> Spec:  $SPEC"
 # 1) Build and push the launcher image (build context = etl/)
 gcloud builds submit "$ETL_DIR" \
   --project "$PROJECT_ID" \
-  --config "$ETL_DIR/beam_etl/cloudbuild.yaml" \
+  --config "$ETL_DIR/ingestion/cloudbuild.yaml" \
   --substitutions "_IMAGE=$IMAGE,_BEAM_VERSION=$BEAM_VERSION,_PY_VERSION=$PY_VERSION"
 
 # 2) Write the template spec (points to the image + declares parameters)
@@ -41,7 +41,7 @@ gcloud dataflow flex-template build "$SPEC" \
   --project "$PROJECT_ID" \
   --image "$IMAGE" \
   --sdk-language PYTHON \
-  --metadata-file "$ETL_DIR/beam_etl/metadata.json"
+  --metadata-file "$ETL_DIR/ingestion/metadata.json"
 
 # 3) "latest" pointer for manual runs; automation should use the commit-tagged spec
 gcloud storage cp "$SPEC" "$LATEST"

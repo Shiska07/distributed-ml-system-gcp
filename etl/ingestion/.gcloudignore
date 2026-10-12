@@ -1,5 +1,5 @@
 # Not needed to build the Beam launcher image
-spark_jobs/
+features/
 tests/
 examples/
 scripts/

@@ -1,5 +1,5 @@
 """
-Tests for spark_jobs/get_features.py: the Spark output schema must match common/.
+Tests for features/get_features.py: the Spark output schema must match common/.
 Run: pytest etl -q
 """
 import os
@@ -11,7 +11,7 @@ from pathlib import Path
 import pandas as pd
 from pandas.api import types as ptypes
 
-from spark_jobs.get_features import FEATURES_COLUMNS, parse_run_path, to_features
+from features.get_features import FEATURES_COLUMNS, parse_run_path, to_features
 from taxi_features.features import FEATURE_COLUMNS, ID_COLUMNS
 
 # how a Spark type must look in pandas
@@ -58,10 +58,10 @@ def test_spark_end_to_end_local(raw):
     """Runs the real mapInPandas step on a local Spark (slower, ~20 s)."""
     pytest.importorskip("pyspark")
     from pyspark.sql import SparkSession
-    from spark_jobs.get_features import FEATURES_SCHEMA
+    from features.get_features import FEATURES_SCHEMA
 
     # Spark's Python workers are separate processes: give them the same Python
-    # and the same import path as the tests (etl/ contains spark_jobs)
+    # and the same import path as the tests (etl/ contains features)
     etl_dir = str(Path(__file__).resolve().parents[1])
     os.environ["PYTHONPATH"] = etl_dir + os.pathsep + os.environ.get("PYTHONPATH", "")
     os.environ["PYSPARK_PYTHON"] = sys.executable

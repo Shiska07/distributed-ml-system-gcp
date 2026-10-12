@@ -1,5 +1,5 @@
 """
-Tests for beam_etl/transforms.py
+Tests for ingestion/transforms.py
   - validate_trip() / validate_outcome(): plain Python unit tests (fast, no Beam)
   - CleanTrip / CleanOutcome: run in a small local Beam pipeline (TestPipeline)
 Run from the repo root:  pytest etl -v
@@ -11,7 +11,7 @@ import pytest
 from apache_beam.testing.test_pipeline import TestPipeline
 from apache_beam.testing.util import assert_that, equal_to
 
-from beam_etl.transforms import (
+from ingestion.transforms import (
     REJECTED, CleanOutcome, CleanTrip, validate_outcome, validate_trip,
 )
 

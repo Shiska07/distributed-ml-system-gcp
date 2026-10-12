@@ -45,9 +45,9 @@ fi
 
 echo ">> Dataflow | source: $SOURCE | $START_DATE -> $END_DATE | lake: $LAKE"
 
-# Run from etl/ so "python -m beam_etl.pipeline" and ./setup.py resolve
+# Run from etl/ so "python -m ingestion.pipeline" and ./setup.py resolve
 cd "$ETL_DIR"
-python -m beam_etl.pipeline \
+python -m ingestion.pipeline \
   --source "$SOURCE" \
   --start_date "$START_DATE" \
   --end_date "$END_DATE" \

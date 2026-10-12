@@ -1,12 +1,12 @@
 """
-Tests for spark_jobs/build_training_dataset.py helpers.
+Tests for features/build_training_dataset.py helpers.
 The full job (join, filters, manifest) is checked on the real run via the manifest numbers.
 """
 from datetime import date, datetime
 
 import pandas as pd
 
-from spark_jobs.build_training_dataset import (
+from features.build_training_dataset import (
     LABELED_COLUMNS, add_label, compute_split_dates, newest_per_key,
 )
 

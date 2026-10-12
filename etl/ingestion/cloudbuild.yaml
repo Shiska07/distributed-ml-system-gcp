@@ -1,11 +1,11 @@
 # Builds the Flex Template launcher image. Run from the repo root:
-#   gcloud builds submit etl --config etl/beam_etl/cloudbuild.yaml --substitutions _IMAGE=<image>
+#   gcloud builds submit etl --config etl/ingestion/cloudbuild.yaml --substitutions _IMAGE=<image>
 steps:
   - name: gcr.io/cloud-builders/docker
     args:
       - build
       - -f
-      - beam_etl/Dockerfile
+      - ingestion/Dockerfile
       - --build-arg
       - PY_VERSION=${_PY_VERSION}
       - --build-arg

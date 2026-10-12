@@ -20,7 +20,7 @@ REPO_DIR="$(dirname "$ETL_DIR")"
 
 JOB_FILE="build_training_dataset.py"
 DATAPROC_VERSION="2.2"
-JOB="$ETL_DIR/spark_jobs/$JOB_FILE"
+JOB="$ETL_DIR/features/$JOB_FILE"
 GIT_COMMIT="$(git -C "$REPO_DIR" rev-parse --short HEAD)"
 BATCH_ID="training-${VERSION}-$(date -u +%Y%m%d-%H%M%S)"
 
