@@ -43,7 +43,7 @@ def evaluate(y, proba, threshold):
     }
 
 def main():
-    # -------------------------------------------------------------------------
+
     # 1. Arguments
     # -------------------------------------------------------------------------
     parser = ArgumentParser(description="Train a model on the taxi dataset.")
@@ -73,7 +73,7 @@ def main():
             "model_type": args.model,
             "dataset_version": args.version,
             "dataset_source": manifest.get('source', 'unknown'),
-            "Git_commit": args.git_commit if hasattr(args, 'git_commit') else 'unknown',
+            "git_commit": args.git_commit if hasattr(args, 'git_commit') else 'unknown',
         })      
 
         mlflow.log_params({
@@ -109,7 +109,7 @@ def main():
         
         # log best parameters and score to MLflow
         mlflow.log_params({f"best_{k}": v for k, v in best_params.items()})                        
-        mlflow.log_metric("cv_pr_auc", grid_search.best_score_)                                    
+        mlflow.log_metric("cv_pr_auc", best_score)                                    
         mlflow.log_param("param_grid", str(param_grid)) 
     
 
@@ -150,7 +150,6 @@ def main():
             signature=infer_signature(example, val_proba[:100]),
             code_paths=[os.path.dirname(taxi_features.__file__)]
         )
-        
 
         # 8. Register the model and assign its role (@champion / @challenger)
         # ---------------------------------------------------------------------
@@ -167,8 +166,7 @@ def main():
             alias = "champion"
         client.set_registered_model_alias(MODEL_NAME, version, alias)
         
-        print(f"Model registered as {MODEL_NAME} version {version} with alias '{alias}'")
-        
+        print(f"Model registered as {MODEL_NAME} version {version} with alias '{alias}'")   
     
 
 if __name__ == "__main__":
