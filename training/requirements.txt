@@ -12,6 +12,7 @@ scikit-learn==1.7.2
 mlflow==3.4.0
 matplotlib==3.10.6
 xgboost==3.4.1
+sqlalchemy==2.0.55
 
 # tests
 pytest==9.1.1
