@@ -9,8 +9,8 @@ The use case is predicting whether a Chicago taxi rider tips more than 20%. The 
 ## Tech Stack
 
 - **Data:** BigQuery · SQL · Apache Beam · Dataflow · Apache Spark · Dataproc Serverless · Parquet
-- **ML:** Vertex AI Training · Model Registry · Endpoints · MLflow · Pipelines
-- **Infrastructure:** Cloud Storage · IAM · gcloud CLI · Bash · Docker · Cloud Build · Artifact Registry
+- **ML:** scikit-learn · XGBoost · MLflow · Vertex AI Training · Model Registry · Endpoints
+- **Infrastructure:** Cloud Storage · Cloud SQL · Cloud Run · Secret Manager · IAM · Docker · Cloud Build · Artifact Registry · gcloud CLI · Bash
 - **CI/CD:** Python · pytest · Git · GitHub Actions
 
 ## Status
@@ -21,8 +21,11 @@ The use case is predicting whether a Chicago taxi rider tips more than 20%. The 
 | Cleaning pipeline (Beam → silver), packaged as a Dataflow Flex Template 
 | Feature pipeline (Spark → gold/features) 
 | Training dataset builder (Spark → gold/labels) 
-| Pipeline automation (Workflows + Scheduler), CI/CD | Planned |
-| Training, registry, serving, monitoring | Planned |
+| Training code (LR / RF / XGBoost, tuning, MLflow logging + registry), tests 
+| MLflow tracking server (Cloud Run + Cloud SQL + GCS) | In progress |
+| Training on Vertex AI, CI (GitHub Actions) | Planned |
+| Serving (endpoint + streaming inference), monitoring | Planned |
+| Pipeline automation (Workflows + Scheduler) | Planned |
 
 ## Architecture
 
@@ -34,19 +37,21 @@ BigQuery (historical trips)        GCS landing/ (production batches)
 silver/trips     (what is known at payment)           silver/outcomes   (tips: the ground truth)
         │  Spark on Dataproc → features                      │
         ▼                                                    │
-gold/features    (stored once; training + inference)         │
-        │                                                    │
-        ├──► batch / online inference                        │
+gold/features    (stored once)                               │
         │                                                    │
         └──► Spark: join + label + split ◄───────────────────┘
                             ▼
 gold/labels/<version>  (labels + split + manifest; no feature copies)
-                            │  Vertex AI Training → train and evaluate
+                            │  Vertex AI Training: tune → fit → evaluate
                             ▼
-Vertex AI Model Registry   versioned models with data lineage
-                            │
+MLflow (Cloud Run)  runs, metrics, lineage → Cloud SQL · model files → GCS
+  └─ Model Registry: @champion / @challenger
+                            │  champion deployed
                             ▼
-Vertex AI Endpoint  ◄── Pub/Sub ◄── held-out data replayed as production traffic
+Vertex AI Endpoint (encoder + model in one pipeline)
+        ▲
+        │  Dataflow streaming: same cleaning + feature code
+Pub/Sub ◄── held-out raw trips replayed as production requests
                             │
                             ▼
 BigQuery prediction log + ground truth → live evaluation, drift monitoring, retraining
@@ -57,27 +62,35 @@ BigQuery prediction log + ground truth → live evaluation, drift monitoring, re
 - **Features and labels separation.** Cleaning splits each record into a trip and its
   outcome. The label is created only when a training dataset is built, so it can't leak into
   features, and the label rule can change without reprocessing.
-- **One feature pipeline for training and serving.** The same code (`common/`) builds features
-  for historical and live data, avoiding training/serving skew.
+- **One code path for training and serving.** The same cleaning (Beam) and feature code
+  (`common/`) runs in batch for training and in streaming for live requests, avoiding
+  training/serving skew.
+- **Encoding saved with the model.** Each model is an sklearn Pipeline (encoder + estimator).
+  Category vocabularies and scaling are fitted on the train split only and travel with the model.
 - **Features stored once.** Training datasets hold only labels and the split, and point to the
   feature rows they use. No data is duplicated per version.
-- **Immutable, traceable data.** Every run writes to its own folder and is never overwritten.
-  Manifest files record inputs, code version and row counts.
-- **Beam for cleaning, Spark for dataset-wide work.** Beam handles record-level checks and can
-  move to streaming with the same code; Spark handles joins, splits and aggregations.
-- **Realistic evaluation.** A later time window is held out from training and replayed as
-  production traffic, so live predictions can be scored against known outcomes.
-- **Serverless where possible.** Dataflow, Dataproc Serverless and Vertex AI: no clusters to manage.
+- **Immutable, traceable data and models.** Every run writes to its own folder; manifests record
+  inputs, code version and row counts. Each MLflow run logs the dataset manifest and git commit.
+- **Time-based evaluation.** Splits and cross-validation respect time order; the decision
+  threshold is chosen on validation and test is used only for reporting.
+- **Champion / challenger.** New models are registered as `@challenger` and replace
+  `@champion` only through an explicit promotion rule.
+- **Beam for cleaning, Spark for dataset-wide work.** Beam handles record-level checks and runs
+  in batch or streaming with the same code; Spark handles joins, splits and aggregations.
+- **Serverless where possible.** Dataflow, Dataproc Serverless, Cloud Run and Vertex AI: no
+  clusters to manage, and idle services scale to zero.
 
 ## Repository Structure
 
 ```
 .
-├── config/dev.env      # project, region, buckets, service account, date windows
-├── infra/              # one-time setup: buckets, IAM, networking, Artifact Registry
-├── common/             # shared feature and label logic (training, serving, monitoring)
-├── simulation/         # writes held-out data into the landing zone as production batches
-└── etl/                # data pipelines: Beam (silver), Spark (features, training datasets)
+├── config/dev.env      # project, region, buckets, service accounts, MLflow settings
+├── infra/              # one-time setup: buckets, IAM, Artifact Registry, MLflow server
+│   └── mlflow/         # MLflow server image (Cloud Run)
+├── common/             # shared features, labels and encoding (training, serving, monitoring)
+├── etl/                # data pipelines: Beam (silver), Spark (features, training datasets)
+├── training/           # data loading, models, tuning grids, train.py (MLflow logging + registry)
+└── simulation/         # writes held-out data into the landing zone as production batches
 ```
 
 ## Documentation
@@ -95,12 +108,20 @@ source config/dev.env
 bash infra/00_create_buckets.sh
 bash infra/01_service_account.sh
 bash infra/02_artifact_registry.sh
+bash infra/04_ml_service_account.sh
+bash infra/05_mlflow_server.sh          # MLflow on Cloud Run + Cloud SQL + GCS
 
-# Python environment and tests
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r etl/requirements.txt
-pip install -e common/
-pytest common etl -q
+# Python environments: one per component (different dependencies)
+uv venv .venv --python 3.12
+uv pip install --python .venv -r etl/requirements.txt -e common/
+
+uv venv training/.venv --python 3.12
+uv pip install --python training/.venv -r training/requirements.txt -e common/
+
+# Tests: run each component separately
+.venv/bin/python -m pytest etl -q
+training/.venv/bin/python -m pytest common -q
+training/.venv/bin/python -m pytest training -q
 ```
 
 See [etl/README.md](etl/README.md) to run the pipelines.
