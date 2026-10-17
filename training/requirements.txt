@@ -1,0 +1,16 @@
+# data (same versions as etl/, so common/ behaves the same everywhere)
+pandas==2.2.3
+numpy==1.26.4
+pyarrow==15.0.2
+
+# GCS access (fsspec and gcsfs versions must match)
+fsspec==2025.9.0
+gcsfs==2025.9.0
+
+# model + tracking
+scikit-learn==1.7.2
+mlflow==3.4.0
+matplotlib==3.10.6
+
+# tests
+pytest==9.1.1
