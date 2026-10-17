@@ -1,6 +1,6 @@
 
 import os
-from Argparse import ArgumentParser
+from argparse import ArgumentParser
 
 import mlflow
 import numpy as np
@@ -52,6 +52,9 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
     parser.add_argument("--cv_frac", type=float, default=0.2, help="Fraction of training data to use for cross-validation.")
     parser.add_argument("--model", type=str, required=True, help="Model tpe: LR, RF, XGB, etc.")  
+    parser.add_argument("--experiment", type=str, default="taxi-tips", help="MLflow experiment name.")
+    parser.add_argument("--git_commit", type=str, default=os.environ.get("GIT_COMMIT", "unknown"),
+                        help="Code version, logged with the run.")
     args = parser.parse_args()
     
     mlflow.set_experiment(args.experiment) 
@@ -116,7 +119,8 @@ def main():
         # 5. Final model: refit on the full training set
         # ---------------------------------------------------------------------
         # train the final model on the full training set with the best parameters
-        final_model, _ = get_model(args.model, **best_params)
+        final_model, _ = get_model(args.model)
+        final_model.set_params(**best_params)  # set the best parameters found during CV
         X_train, y_train = split_xy(splits["train"])
         final_model.fit(X_train, y_train)
         
@@ -144,9 +148,9 @@ def main():
         flt32_cols = example.select_dtypes("float32").columns
         example = example.astype({col: "float64" for col in flt32_cols})  # convert float32 to float64 for MLflow signature
         model_info = mlflow.sklearn.log_model(
-            model=final_model,
-            model_name="model",
-            example=example.head(5),
+            sk_model=final_model,
+            name="model",
+            input_example=example.head(5),
             signature=infer_signature(example, val_proba[:100]),
             code_paths=[os.path.dirname(taxi_features.__file__)]
         )
@@ -155,7 +159,7 @@ def main():
         # ---------------------------------------------------------------------
         # regiser the model in the MLflow Model Registry
         client = MlflowClient()
-        version = mlflow.register_model(model_info.model_url, MODEL_NAME).version
+        version = mlflow.register_model(model_info.model_uri, MODEL_NAME).version
         client.set_model_version_tag(MODEL_NAME, version, "threshold", str(thresh))
         client.set_model_version_tag(MODEL_NAME, version, "model_type", str(args.model))
         try:
@@ -164,7 +168,7 @@ def main():
             alias = "challenger"
         except MlflowException:
             alias = "champion"
-        client.set_registered_model_alias(MODEL_NAME, version, alias)
+        client.set_registered_model_alias(MODEL_NAME, alias, version)
         
         print(f"Model registered as {MODEL_NAME} version {version} with alias '{alias}'")   
     

@@ -49,4 +49,24 @@ def build_encoder_lr(min_frequency: int = 100) -> ColumnTransformer:
         ],
         remainder="drop",
     )
-    
+
+def build_encoder_trees(min_frequency: int = 100) -> ColumnTransformer:
+    """Unfitted encoder for tree models (random forest, XGBoost).
+
+    Trees split on thresholds, so numeric columns need no log or scaling.
+    Categories still need one-hot encoding: area 32 is not 'more' than area 8.
+    """
+    categorical = OneHotEncoder(
+        handle_unknown="infrequent_if_exist",
+        min_frequency=min_frequency,
+    )
+
+    return ColumnTransformer(
+        [
+            ("numeric", "passthrough", NUMERIC_COLUMNS),            # raw values; trees are scale-invariant
+            ("categorical", categorical, CATEGORICAL_COLUMNS),
+            ("binary", "passthrough", BINARY_COLUMNS),
+        ],
+        remainder="drop",
+    )
+      
