@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from training.load_dataset import load_data, shrink, split_xy
+from load_dataset import load_data, shrink, split_xy
 from taxi_features.features import FEATURE_COLUMNS
 
 RUN_1 = "2022-01-01_2022-01-06_20260101-000000"
@@ -37,7 +37,7 @@ def build_lake(tmp_path, split_keys=SPLIT_KEYS, feature_columns=FEATURE_COLUMNS)
                       "label": [1] * len(keys)}).to_parquet(split_dir / "part-0.parquet")
 
     manifest = {"source": "historical",
-                "inputs": {"features_root": str(tmp_path / "gold/features")},
+                "inputs": {"features_root": str(features_dir)},   # .../gold/features/source=historical
                 "feature_columns": feature_columns}
     (version_dir / "_manifest.json").write_text(json.dumps(manifest))
     return str(tmp_path)
