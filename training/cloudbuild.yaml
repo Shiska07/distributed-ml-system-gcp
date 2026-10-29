@@ -1,0 +1,44 @@
+# Test, build and push the training image.
+# Triggered from GitHub on push (SHORT_SHA = commit), or run manually:
+#   gcloud builds submit . --config=training/cloudbuild.yaml \
+#     --substitutions=SHORT_SHA=$(git rev-parse --short HEAD)
+
+steps:
+  # 1. Tests: a failure stops the build, so broken code never becomes an image
+  - id: test
+    name: python:3.12-slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        pip install --quiet -r training/requirements.txt ./common
+        python -m pytest common -q
+        python -m pytest training -q
+
+  # 2. Build the image, tagged with the commit and as "latest"
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - training/Dockerfile
+      - --build-arg
+      - GIT_COMMIT=$SHORT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/taxi-train:$SHORT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/taxi-train:latest
+      - .
+
+# 3. Push both tags to Artifact Registry
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/taxi-train:$SHORT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/taxi-train:latest
+
+substitutions:
+  _REGION: us-central1
+  _REPO: taxi-etl
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  

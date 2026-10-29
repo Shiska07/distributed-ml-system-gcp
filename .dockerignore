@@ -1,0 +1,19 @@
+# Version control and local environments
+.git
+**/.venv
+
+# Python caches
+**/__pycache__
+**/.pytest_cache
+
+# Local MLflow files
+mlflow.db
+mlruns/
+mlartifacts/
+
+# Build leftovers
+dist/
+
+# Not needed in the training image
+etl/
+simulation/
