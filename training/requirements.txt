@@ -16,4 +16,4 @@ sqlalchemy==2.0.55
 
 # tests
 pytest==9.1.1
-  
+google-cloud-aiplatform==2.7.0
