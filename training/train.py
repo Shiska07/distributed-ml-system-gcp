@@ -162,7 +162,7 @@ def main():
         
 
         refresh_mlflow_token()
-        # 7. Save the model to MLflow (pipeline + input schema + encoding code)
+        # 7.Save the model to MLflow (pipeline + input schema + encoding code)
         # ---------------------------------------------------------------------
         # log model signature and save the model to MLflow
         example = X_val.head(100)
