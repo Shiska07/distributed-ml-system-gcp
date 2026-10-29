@@ -1,3 +1,5 @@
+import google.auth.transport.requests
+import google.oauth2.id_token
 
 import os
 from argparse import ArgumentParser
@@ -18,6 +20,24 @@ from training.models import get_model
 from load_dataset import load_data, split_xy
 
 MODEL_NAME = "taxi-tip-classifier"  
+
+def refresh_mlflow_token():
+    """Identity token for the private MLflow server on Cloud Run.
+
+    On Vertex AI the token comes from the job's service account. Tokens expire after
+    1 hour, so this is called again before the final logging steps of long runs.
+    Locally (user login), fetching fails; set MLFLOW_TRACKING_TOKEN yourself instead.
+    """
+    uri = os.environ.get("MLFLOW_TRACKING_URI", "")
+    if not uri.startswith("https://"):
+        return                                   # local server or sqlite: no token needed
+    try:
+        token = google.oauth2.id_token.fetch_id_token(
+            google.auth.transport.requests.Request(), uri)
+        os.environ["MLFLOW_TRACKING_TOKEN"] = token
+    except Exception:
+        if "MLFLOW_TRACKING_TOKEN" not in os.environ:
+            raise
 
 def pick_threshold(y, proba):
     """Probability cut-off that maximizes F1 (chosen on the validation set)."""
@@ -57,8 +77,8 @@ def main():
                         help="Code version, logged with the run.")
     args = parser.parse_args()
     
+    refresh_mlflow_token()
     mlflow.set_experiment(args.experiment) 
-    
 
     # 2. Data
     # -------------------------------------------------------------------------
@@ -141,6 +161,7 @@ def main():
             mlflow.log_metric(f"test_{name}", float(value))
         
 
+        refresh_mlflow_token()
         # 7. Save the model to MLflow (pipeline + input schema + encoding code)
         # ---------------------------------------------------------------------
         # log model signature and save the model to MLflow
