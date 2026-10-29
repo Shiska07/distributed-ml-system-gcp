@@ -37,7 +37,7 @@ def build_lake(tmp_path, split_keys=SPLIT_KEYS, feature_columns=FEATURE_COLUMNS)
                       "label": [1] * len(keys)}).to_parquet(split_dir / "part-0.parquet")
 
     manifest = {"source": "historical",
-                "features_root": str(tmp_path / "gold/features"),
+                "inputs": {"features_root": str(tmp_path / "gold/features")},
                 "feature_columns": feature_columns}
     (version_dir / "_manifest.json").write_text(json.dumps(manifest))
     return str(tmp_path)

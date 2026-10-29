@@ -47,7 +47,7 @@ def load_data(lake: str,
     if manifest["feature_columns"] != FEATURE_COLUMNS:
         raise ValueError("Dataset feature_columns do not match taxi_features.FEATURE_COLUMNS")
     
-    features_dir = f"{manifest["features_root"]}/source={manifest["source"]}"
+    features_dir = f"{manifest["inputs"]["features_root"]}/source={manifest["source"]}"
     
     splits = {}
     for split in SPLITS:

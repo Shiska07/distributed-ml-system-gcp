@@ -53,8 +53,11 @@ def build_lake(root, n=300):
         pd.DataFrame({"unique_key": keys[rows], "feature_run_id": RUN_ID,
                       "label": labels[rows]}).to_parquet(split_dir / "part-0.parquet")
 
-    manifest = {"source": "historical", "features_root": str(root / "gold/features"),
-                "feature_columns": FEATURE_COLUMNS}
+    manifest = {
+        "source": "historical",
+        "inputs": {"features_root": str(root / "gold/features/source=historical")},
+        "feature_columns": FEATURE_COLUMNS,
+    }
     (version_dir / "_manifest.json").write_text(json.dumps(manifest))
     return str(root)
 

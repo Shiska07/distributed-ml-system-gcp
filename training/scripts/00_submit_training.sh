@@ -13,7 +13,7 @@
 #
 # Examples:
 #   # logistic regression, newest image, quick tuning on 5% of train
-#   bash training/scripts/00_submit_training.sh LR v1 taxi-tips n1-highmem-8 latest 0.2
+#   bash training/scripts/00_submit_training.sh LR v1 taxi-tips n1-highmem-16 latest 0.2
 #
 #   # XGBoost from an exact build (commit 47731f8), default tuning fraction
 #   bash training/scripts/00_submit_training.sh XGB v1 taxi-tips n1-highmem-16 47731f8
