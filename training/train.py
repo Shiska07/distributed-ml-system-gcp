@@ -58,7 +58,7 @@ def main():
     parser.add_argument("--version", type=str, required=True, help="Version of the dataset to use.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
     parser.add_argument("--cv_frac", type=float, default=0.2, help="Fraction of training data to use for cross-validation.")
-    parser.add_argument("--model", type=str, required=True, help="Model type: LR, RF, XGB.")
+    parser.add_argument("--model", type=str, required=True, choices=["LR", "RF", "XGB"], help="Model type: LR, RF, XGB.")
     parser.add_argument("--experiment", type=str, default="taxi-tips", help="MLflow experiment name.")
     parser.add_argument("--git_commit", type=str, default=os.environ.get("GIT_COMMIT", "unknown"),
                         help="Code version, logged with the run.")
