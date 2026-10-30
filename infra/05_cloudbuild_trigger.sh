@@ -49,7 +49,7 @@ for ROLE in roles/artifactregistry.writer roles/logging.logWriter; do
     --member="serviceAccount:$BUILD_SA" --role="$ROLE" --condition=None >/dev/null
 done
 
-# --- Trigger --------------------------------------------------------------------
+# --- Trigger: Training --------------------------------------------------------------------
 if ! gcloud builds triggers describe train-image --region="$REGION" >/dev/null 2>&1; then
   gcloud builds triggers create github \
     --name=train-image \
@@ -58,6 +58,18 @@ if ! gcloud builds triggers describe train-image --region="$REGION" >/dev/null 2
     --branch-pattern='^master$' \
     --build-config=training/cloudbuild.yaml \
     --included-files='training/**,common/**' \
+    --service-account="projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA}"
+fi
+
+# --- Trigger: Serving --------------------------------------------------------------------
+if ! gcloud builds triggers describe serve-image --region="$REGION" >/dev/null 2>&1; then
+  gcloud builds triggers create github \
+    --name=serve-image \
+    --region="$REGION" \
+    --repository="projects/${PROJECT_ID}/locations/${REGION}/connections/${GITHUB_CONNECTION}/repositories/${GITHUB_REPO}" \
+    --branch-pattern='^master$' \
+    --build-config=serving/cloudbuild.yaml \
+    --included-files='serving/**,common/**' \
     --service-account="projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA}"
 fi
 

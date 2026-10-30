@@ -1,0 +1,15 @@
+# Model libraries
+pandas==2.2.3
+numpy==1.26.4
+pyarrow==15.0.2
+scikit-learn==1.7.2
+mlflow==3.4.0
+xgboost==3.4.1
+sqlalchemy==2.0.55
+
+# Prediction server
+uvicorn==0.54.0
+fastapi==0.143.2
+
+# GCS
+google-cloud-storage==3.17.1

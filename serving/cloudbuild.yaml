@@ -1,0 +1,52 @@
+# Test, build and push the serving image.
+# Triggered from GitHub on push (SHORT_SHA = commit), or run manually:
+#   gcloud builds submit . --config=serving/cloudbuild.yaml \
+#     --substitutions=SHORT_SHA=$(git rev-parse --short HEAD)
+
+steps:
+  # 1. Tests for the shared feature/encoding code the server depends on
+  - id: test
+    name: python:3.12-slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        pip install --quiet -r serving/requirements.txt ./common pytest
+        python -m pytest common -q
+
+  # 2. Build the image, tagged with the commit and as "latest"
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - serving/Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/taxi-serve:$SHORT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/taxi-serve:latest
+      - .
+
+  # 3. Smoke test: everything the server imports must load inside the image
+  - id: smoke-test
+    name: ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/taxi-serve:$SHORT_SHA
+    entrypoint: python
+    args:
+      - -c
+      - |
+        import fastapi, uvicorn, mlflow.sklearn, sklearn, xgboost, pandas
+        import google.cloud.storage, taxi_features.encoding
+        print("imports OK")
+
+# 4. Push both tags to Artifact Registry
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/taxi-serve:$SHORT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/taxi-serve:latest
+
+substitutions:
+  _REGION: us-central1
+  _REPO: taxi-etl
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  
